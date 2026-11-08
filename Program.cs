@@ -44,7 +44,7 @@ public static class Program
         Console.WriteLine("Processing asset files...");
         string[] files = Directory.GetFiles(assetsFolderPath, "*.png");
         
-        List<Item> cache = new(files.Length);
+        List<Item> items = new(files.Length);
 
         foreach (string file in files)
         {
@@ -57,10 +57,10 @@ public static class Program
             }
 
             byte[] iconBytes = await File.ReadAllBytesAsync(file);
-            cache.Add(new Item(id, translation, iconBytes));
+            items.Add(new Item(id, translation, iconBytes));
         }
 
-        Console.WriteLine($"Successfully mapped {cache.Count} items.");
+        Console.WriteLine($"Successfully mapped {items.Count} items.");
 
         string? outputDir = Path.GetDirectoryName(outputFilePath);
         if (!string.IsNullOrEmpty(outputDir))
@@ -69,7 +69,7 @@ public static class Program
         }
 
         await using FileStream outputStream = File.Create(outputFilePath);
-        await MemoryPackSerializer.SerializeAsync(outputStream, cache.ToArray());
+        await MemoryPackSerializer.SerializeAsync(outputStream, new ItemCache(items.ToArray()));
 
         Console.WriteLine(
             $"Generated cache saved to '{outputFilePath}' ({new FileInfo(outputFilePath).Length / 1024} KB).");
