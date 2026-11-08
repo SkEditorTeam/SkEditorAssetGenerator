@@ -1,0 +1,76 @@
+name: Update Minecraft Assets
+
+on:
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Check latest commit SHA on mc-assets
+        id: check_sha
+        run: |
+          LATEST_SHA=$(git ls-remote https://github.com/Owen1212055/mc-assets.git HEAD | awk '{print $1}')
+          echo "latest_sha=$LATEST_SHA" >> $GITHUB_OUTPUT
+          
+          if [ -f last_sha.txt ] && [ "$(cat last_sha.txt)" = "$LATEST_SHA" ] && [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            echo "should_build=false" >> $GITHUB_OUTPUT
+            echo "Assets are up to date ($LATEST_SHA). Skipping build."
+          else
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "New commit detected ($LATEST_SHA) or manual trigger. Proceeding."
+          fi
+
+      - name: Setup .NET
+        if: steps.check_sha.outputs.should_build == 'true'
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Download en_us.json
+        if: steps.check_sha.outputs.should_build == 'true'
+        run: |
+          curl -sSL "https://raw.githubusercontent.com/misode/mcmeta/assets-json/assets/minecraft/lang/en_us.json" -o en_us.json
+
+      - name: Sparse clone item-assets
+        if: steps.check_sha.outputs.should_build == 'true'
+        run: |
+          git clone --depth 1 --filter=blob:none --sparse https://github.com/Owen1212055/mc-assets.git temp-assets
+          cd temp-assets
+          git sparse-checkout set item-assets
+
+      - name: Run SkEditorAssetGenerator
+        if: steps.check_sha.outputs.should_build == 'true'
+        run: |
+          dotnet run -- ./temp-assets/item-assets ./en_us.json ./output/items.bin
+
+      - name: Commit & push new SHA
+        if: steps.check_sha.outputs.should_build == 'true'
+        run: |
+          echo "${{ steps.check_sha.outputs.latest_sha }}" > last_sha.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add last_sha.txt
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: update mc-assets SHA to ${{ steps.check_sha.outputs.latest_sha }}"
+            git push
+          fi
+
+      - name: Upload items.bin to GitHub Release
+        if: steps.check_sha.outputs.should_build == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ! gh release view latest > /dev/null 2>&1; then
+            gh release create latest ./output/items.bin --title "Latest Assets" --notes "Automated build of Minecraft assets."
+          else
+            gh release upload latest ./output/items.bin --clobber
+          fi
